@@ -1,5 +1,10 @@
+#!/usr/bin/env python3
+
 import socket
 import sys
+import traceback
+import os
+import mimetypes
 
 def response_ok(body=b"This is a minimal response", mimetype=b"text/plain"):
     """
@@ -17,7 +22,12 @@ def response_ok(body=b"This is a minimal response", mimetype=b"text/plain"):
         <html><h1>Welcome:</h1></html>\r\n
         '''
     """
-    pass
+    return b"\r\n".join([
+        b"HTTP/1.1 200 OK",
+        b"Content-Type: " + mimetype,
+        b"",
+        body,
+    ])
 
 
 def parse_request(request):
@@ -26,19 +36,67 @@ def parse_request(request):
 
     This server only handles GET requests, so this method shall raise a
     NotImplementedError if the method of the request is not GET.
+
+    GET /pub/WWW/TheProject.html HTTP/1.1
+    GET / HTTP/1.1
     """
-    pass
+
+    print("trying to parse request:", request)
+    lines = request.split("\r\n")
+    print("lines", lines)
+    first_line_components = lines[0].split(" ")
+    method = first_line_components[0]
+    path = first_line_components[1]
+    # method, path, version = request.split("\r\n")[0].split(" ")
+
+    if method != "GET":
+        raise NotImplementedError
+
+    return path
 
 
 def response_method_not_allowed():
     """Returns a 405 Method Not Allowed response"""
-    pass
+    return b"\r\n".join([
+        b"HTTP/1.1 405 Method Not Allowed",
+        b"",
+        b"You can't do that on this server!",
+    ])
 
+
+def retrieve_bytes(path):
+    """
+    will retrieve a txt file in bytes
+
+    :param path: str must not have leading / !
+    """
+    assert path[0] != '/', "cannot have leading / before os.path.join"
+    local_path = os.path.join('webroot', path)
+    with open(local_path, 'rb') as f:
+        file_contents = f.read()
+
+    return file_contents
+
+def retrieve_mimetype(path):
+    """
+    'text/plain' .txt
+    'image/jpeg'
+    'text/html'
+    'text/png' .png
+    'image/vnd.microsoft.icon' .ico
+    """
+    extension = os.path.splitext(path)[1]
+    result = mimetypes.types_map[extension]
+    return str.encode(result)
 
 def response_not_found():
     """Returns a 404 Not Found response"""
-    pass
-    
+    return b"\r\n".join([
+        b"HTTP/1.1 404 File Not Found",
+        b"", # this line must be blank!
+        b"<h1>404 Not Found</h1>",
+    ])
+
 
 def resolve_uri(uri):
     """
@@ -77,10 +135,30 @@ def resolve_uri(uri):
     content = b"not implemented"
     mime_type = b"not implemented"
 
+    local_path = os.path.join('webroot', uri[1:])
+
+    if os.path.isfile(local_path):
+        content = retrieve_bytes(uri[1:])
+        mime_type = retrieve_mimetype(uri[1:])
+    elif os.path.isdir(local_path):
+        mime_type = b"text/plain"
+        files = uri
+        for item in os.listdir(local_path):
+            files += ", " + item
+        content = files.encode()
+    else:
+        raise NameError
+
+    assert isinstance(content, bytes)
+    assert isinstance(mime_type, bytes)
+
     return content, mime_type
 
 
 def server(log_buffer=sys.stderr):
+    """
+    main loop
+    """
     address = ('127.0.0.1', 10000)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -91,19 +169,67 @@ def server(log_buffer=sys.stderr):
     try:
         while True:
             print('waiting for a connection', file=log_buffer)
+            response = b'' # just adding this up here in case I ctrl+C
             conn, addr = sock.accept()  # blocking
             try:
                 print('connection - {0}:{1}'.format(*addr), file=log_buffer)
+
+                request = ''
                 while True:
                     data = conn.recv(16)
                     print('received "{0}"'.format(data), file=log_buffer)
-                    if data:
-                        print('sending data back to client', file=log_buffer)
-                        conn.sendall(data)
-                    else:
-                        msg = 'no more data from {0}:{1}'.format(*addr)
-                        print(msg, log_buffer)
+                    request += data.decode('utf8')
+
+                    if '\r\n\r\n' in request:
+                        print("breaking request.")
                         break
+
+                print()
+                print("Request received:\n{}\n\n".format(request))
+
+
+                try:
+                    path = parse_request(request)
+                    print("path is: ", path)
+
+                    # note if i don't strip the leading / then the 'webroot'
+                    # portion will not be added.
+                    # if path[0] == '/':
+                    #     path = path[1:]
+                    # local_path = os.path.join('webroot', path)
+                    # print("local path is", local_path)
+                    # body = b''
+                    # with open(local_path, 'rb') as f:
+                    #     print('f.read()', f.read())
+                        # body = f.read().encode()
+
+                    content, mime_type = resolve_uri(path)
+                    response = response_ok(
+                        body=content,
+                        mimetype=mime_type
+                    )
+
+                    # response = b"HTTP/1.1 200 OK\r\n" + \
+                    #     b"Content-Type: text\r\n" + \
+                    #     b"\r\n" + \
+                    #     b"This is a very simple text file.\n" + \
+                    #     b"Just to show that we can server it up.\n" + \
+                    #     b"It is three lines long.\n"
+                except NameError:
+                    response = response_not_found()
+
+                except NotImplementedError:
+                    response = response_method_not_allowed()
+                # if data:
+                #     print('sending data back to client', file=log_buffer)
+                #     conn.sendall(data)
+                # else:
+                #     msg = 'no more data from {0}:{1}'.format(*addr)
+                #     print(msg, log_buffer)
+                #     break
+                conn.sendall(response)
+            except:
+                traceback.print_exc()
             finally:
                 conn.close()
 
@@ -115,5 +241,3 @@ def server(log_buffer=sys.stderr):
 if __name__ == '__main__':
     server()
     sys.exit(0)
-
-

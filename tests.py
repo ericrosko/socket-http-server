@@ -1,8 +1,20 @@
+#!/usr/bin/env python3
+
 import unittest
 import subprocess
 import http.client
 import os
 
+# helper functions
+from http_server import retrieve_mimetype
+from http_server import retrieve_bytes
+
+"""
+python -m unittest -v tests.py
+python3 -m unittest -v tests.WebTestCase.test_root_index
+python3 -m unittest -v tests.WebTestCase
+
+"""
 
 class WebTestCase(unittest.TestCase):
     """tests for the echo server and client"""
@@ -35,22 +47,57 @@ class WebTestCase(unittest.TestCase):
 
         return response
 
+    def test_retrieve_mimetype(self):
+        self.assertEqual(b'text/plain', retrieve_mimetype('/sample.txt'))
+        self.assertEqual(b'image/png', retrieve_mimetype('images/sample.png'))
+        self.assertEqual(b'image/jpeg', retrieve_mimetype('/images/sample.jpg'))
+        self.assertEqual(b'image/vnd.microsoft.icon', retrieve_mimetype('images/sample.ico'))
+        self.assertEqual(b'text/html', retrieve_mimetype('test.html'))
+
+    def test_retrieve_bytes(self):
+
+        expected = \
+            b"This is a very simple text file.\n" + \
+            b"Just to show that we can server it up.\n" + \
+            b"It is three lines long.\n"
+
+        result = retrieve_bytes('sample.txt')
+        self.assertTrue(isinstance(result, bytes))
+        self.assertEqual(expected, result)
+
     def test_get_sample_text_content(self):
         """
         A call to /sample.txt returns the correct body
         """
         file = 'sample.txt'
 
-        local_path = os.path.join('webroot', *file.split('/'))
+        # local_path = os.path.join('webroot', *file.split('/'))
+        local_path = os.path.join('webroot', file)
+
         web_path = '/' + file
         error_comment = "Error encountered while visiting " + web_path
 
+        # <http.client.HTTPResponse object at 0x101bcb4e0>
         response = self.get_response(web_path)
+
+        print()
+        print("test local path:::", local_path)
+        print("test response", response)
+
+        # note you only
+        # print("test response.read()", response.read())
+        print("test getcode", response.getcode())
+        print()
+        # print("test response.read()", response.
 
         self.assertEqual(response.getcode(), 200, error_comment)
 
         with open(local_path, 'rb') as f:
-            self.assertEqual(f.read(), response.read(), error_comment)
+            file_contents = f.read()
+
+        print("test file_contents:", file_contents)
+        print()
+        self.assertEqual(file_contents, response.read(), error_comment)
 
     def test_get_sample_text_mime_type(self):
         """
